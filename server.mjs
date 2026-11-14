@@ -1,10 +1,14 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { snapshot } from './data.mjs';
+import { snapshot, repo } from './data.mjs';
+import { createRemoteSync } from './sync.mjs';
+const remoteSync = createRemoteSync(repo);
+remoteSync.refresh();
 const port = Number(process.env.PORT || 4174);
 const assets = {'/':['index.html','text/html'], '/app.js':['app.js','text/javascript'], '/style.css':['style.css','text/css']};
 let cached, pending;
 async function current() {
+  void remoteSync.refresh();
   if (cached && Date.now()-cached.time<10000) return cached.data;
   if (!pending) pending = snapshot().then(data=>{cached={time:Date.now(),data};return data;}).finally(()=>{pending=null;});
   return pending;
@@ -16,7 +20,7 @@ createServer(async(req,res)=>{
   const path = new URL(req.url,'http://localhost').pathname;
   if(req.method!=='GET') {res.writeHead(405);return res.end('Method not allowed');}
   try {
-    if(path==='/api/progress') {const data=await current();res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify(data));}
+    if(path==='/api/progress') {const data=await current();res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({...data, sync: remoteSync.status()}));}
     if(!assets[path]) {res.writeHead(404);return res.end('Not found');}
     const [file,type]=assets[path];const body=await readFile(new URL(`./public/${file}`,import.meta.url));res.writeHead(200,{'Content-Type':type});res.end(body);
   } catch(error) {console.error(error.message);res.writeHead(503,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'Repository unavailable. Check REPO_PATH and Git access.'}));}
